@@ -19,6 +19,7 @@ youtube_hard_rules:
 models:
   tts: "kokoro"
   image: "flux"
+  claude: "claude-haiku-4-5-20251001"   # cheaper/faster; swap to "claude-sonnet-5" for better long-form script quality
 
 comfyui:
   url: "http://127.0.0.1:8188"          # point this at your own ComfyUI (local or RunPod URL)

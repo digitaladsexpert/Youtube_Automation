@@ -120,7 +120,7 @@ async def creative_direction(job_id: str):
     topic = await _get_topic(job_id)
     client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     response = client.messages.create(
-        model="claude-sonnet-5",
+        model=CONFIG.get("models", {}).get("claude", "claude-haiku-4-5-20251001"),
         max_tokens=4000,
         messages=[{
             "role": "user",
@@ -172,7 +172,7 @@ async def generate_script(job_id: str):
     4. End with the disclaimer: "This video is for informational purposes only and is not financial advice."
     """
     response = client.messages.create(
-        model="claude-sonnet-5",
+        model=CONFIG.get("models", {}).get("claude", "claude-haiku-4-5-20251001"),
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}]
     )
