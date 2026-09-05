@@ -25,6 +25,11 @@ python3 -m venv venv
 ./venv/bin/pip install -r requirements.txt
 # ./venv/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
+# For downloading the model files below (verified real CLI, from
+# huggingface_hub's own source — the older `huggingface-cli` name still works
+# too, this is just the current one).
+./venv/bin/pip install -U huggingface_hub
+
 echo ""
 echo "==================================================================="
 echo "ComfyUI installed at $(pwd)"
@@ -32,14 +37,19 @@ echo ""
 echo "Start it with:"
 echo "  cd $(pwd) && ./venv/bin/python main.py --listen 0.0.0.0 --port 8188"
 echo ""
-echo "You still need FLUX model files (not downloaded by this script —"
-echo "10-25GB+ combined, and I can't verify exact current filenames/links"
-echo "live from here, so check the model's Hugging Face page):"
-echo "  models/unet/flux1-schnell.safetensors   (Apache-2.0, no HF login needed)"
-echo "    or flux1-dev.safetensors              (better quality, needs HF license accept)"
-echo "  models/clip/clip_l.safetensors"
-echo "  models/clip/t5xxl_fp16.safetensors"
-echo "  models/vae/ae.safetensors"
+echo "Now get the FLUX model files (10-25GB+ combined — I can't verify the"
+echo "CURRENT exact repo names/filenames live from this sandbox since"
+echo "huggingface.co isn't reachable from here, so double-check these against"
+echo "the model's page before running. FLUX.1-schnell is Apache-2.0, no HF"
+echo "login needed; FLUX.1-dev needs you to accept a license on huggingface.co"
+echo "first, then pass --token <your_hf_token> to the commands below):"
+echo ""
+echo "  cd $(pwd)"
+echo "  ./venv/bin/hf download black-forest-labs/FLUX.1-schnell flux1-schnell.safetensors --local-dir models/unet"
+echo "  ./venv/bin/hf download comfyanonymous/flux_text_encoders clip_l.safetensors t5xxl_fp16.safetensors --local-dir models/clip"
+echo "  ./venv/bin/hf download black-forest-labs/FLUX.1-schnell ae.safetensors --local-dir models/vae"
+echo ""
+echo "  (older huggingface_hub versions: swap 'hf download' for 'huggingface-cli download' above)"
 echo ""
 echo "Then in ComfyUI's web UI (http://localhost:8188), build a Text-to-Image"
 echo "FLUX workflow (UNETLoader -> DualCLIPLoader -> VAELoader -> CLIPTextEncode"
