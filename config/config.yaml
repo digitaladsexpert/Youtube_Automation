@@ -1,0 +1,21 @@
+system:
+  min_duration: 15
+  max_duration: 30
+  min_scene_duration: 4
+  max_scene_duration: 10
+  quality_threshold: 85
+
+youtube_hard_rules:
+  profanity:
+    blocked_words: ["fuck", "shit", "bitch", "damn", "asshole"]
+    action: "BLOCK"
+  financial_claims:
+    prohibited_phrases: ["guaranteed profit", "risk free", "sure shot", "double your money", "100% returns"]
+    action: "BLOCK"
+  ai_disclosure:
+    required: true
+    action: "AUTO_ADD"
+
+models:
+  tts: "kokoro"
+  image: "flux"

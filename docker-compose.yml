@@ -1,0 +1,26 @@
+version: '3.8'
+
+# FIXED: this file used to also define a `postgres` (pgvector) service and an
+# `n8n` service. Neither was actually used: database/db.py hardcodes SQLite
+# and never reads DATABASE_URL, and n8n_workflows/ was empty — so both
+# containers ran and did nothing. Removed to keep this honest about what the
+# app actually uses. If you wire up real Postgres or n8n later, add them back.
+
+services:
+  hermes-api:
+    build: .
+    container_name: youtube_hermes
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./jobs:/app/jobs
+      - ./config:/app/config
+      - ./scripts:/app/scripts
+      - ./secrets:/app/secrets
+      - ./assets:/app/assets
+    restart: unless-stopped
+    # NOTE: youtube_prod.db (SQLite) lives inside the container by default, so
+    # it resets on rebuild. `touch youtube_prod.db` on the host first, then add
+    # `- ./youtube_prod.db:/app/youtube_prod.db` above if you want it to persist.

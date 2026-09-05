@@ -1,0 +1,25 @@
+# Secrets & Environment
+.env
+secrets/
+*.json
+*.pickle
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Database
+*.db
+*.db-journal
+
+# Jobs (Videos, Images, Audio)
+jobs/
+assets/images/
+assets/audio/
+models/
+
+# IDE
+.vscode/
+.idea/
