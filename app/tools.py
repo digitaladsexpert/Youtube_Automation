@@ -233,8 +233,28 @@ async def generate_voice(job_id: str):
             "(plus its model weights/dependencies) before running voice generation."
         )
 
-    generator = kokoro_pipeline(script[:5000], voice='af_heart', speed=1.0)
-    audio_chunks = [audio for audio, _, _ in generator]
+    # FIXED (two separate bugs):
+    # 1) `script[:5000]` only fed the first ~20% of a 4000-word script to Kokoro —
+    #    the video's scenes covered the full script, but narration silently cut
+    #    off after ~4-7 minutes, leaving the rest of a 15-20 min video dead silent.
+    #    Kokoro's own pipeline already auto-chunks long text internally (verified
+    #    in its source), so there's no need to cap this at the app level at all.
+    # 2) `for audio, _, _ in generator` — Kokoro's Result object yields
+    #    (graphemes, phonemes, audio) for backward compatibility, in that order.
+    #    So the old code's "audio" variable actually held the input TEXT STRING,
+    #    not the audio waveform. `np.concatenate()` on a list of strings would
+    #    have raised immediately — this function could never have produced real
+    #    audio, truncation aside.
+    generator = kokoro_pipeline(script, voice='af_heart', speed=1.0)
+    audio_chunks = []
+    for result in generator:
+        a = result.audio
+        if a is None:
+            continue
+        if hasattr(a, "detach"):  # torch.Tensor -> numpy
+            a = a.detach().cpu().numpy()
+        audio_chunks.append(a)
+
     if not audio_chunks:
         raise RuntimeError("Kokoro produced no audio output for this script.")
     full_audio = np.concatenate(audio_chunks)
@@ -373,23 +393,42 @@ async def _comfyui_generate(comfy_url: str, workflow_template: dict, prompt_node
 
 # ---------- 8. REAL EDITING (MoviePy) ----------
 async def edit_video(job_id: str):
+    """
+    FIXED: scene durations in scene_plan.json are a rough character-count guess
+    made BEFORE any real audio exists — they have no actual relationship to
+    Kokoro's real speaking pace. Previously the video was built purely from
+    that guess, completely independent of the real narration length: if the
+    guess ran short, narration got cut off when the video ran out of scenes;
+    if it ran long (more likely now that generate_voice covers the full
+    script), the video would just go silent for however long the guess
+    overshot by. This rescales every scene's duration proportionally so the
+    video's total length always matches the real audio exactly, while still
+    preserving each scene's relative share of screen time.
+    """
     async with aiofiles.open(f"jobs/{job_id}/scene_plan.json", 'r') as f:
         plan = json.loads(await f.read())
+    scenes = plan["scenes"]
+
+    audio_path = f"jobs/{job_id}/audio/final_audio.mp3"
+    audio = AudioFileClip(audio_path) if os.path.exists(audio_path) else None
+
+    planned_total = plan.get("total_duration") or sum(s.get("duration", 6) for s in scenes)
+    scale = (audio.duration / planned_total) if (audio and planned_total) else 1.0
+
     clips = []
-    for scene in plan["scenes"]:
+    for scene in scenes:
         img_path = f"jobs/{job_id}/assets/images/{scene['scene_id']}.png"
         if not os.path.exists(img_path):
             img = Image.new('RGB', (1920, 1080), color='black')
             img.save(img_path)
-        duration = scene.get("duration", 6)
+        duration = max(scene.get("duration", 6) * scale, 0.5)  # keep a sane floor
         clip = ImageClip(img_path, duration=duration)
         if scene.get("motion") == "zoom":
             clip = clip.resize(lambda t: 1 + 0.05*t).set_position('center')
         clips.append(clip)
+
     final_video = concatenate_videoclips(clips, method="compose")
-    audio_path = f"jobs/{job_id}/audio/final_audio.mp3"
-    if os.path.exists(audio_path):
-        audio = AudioFileClip(audio_path)
+    if audio:
         final_video = final_video.set_audio(audio)
     os.makedirs(f"jobs/{job_id}/final", exist_ok=True)
     final_path = f"jobs/{job_id}/final/video.mp4"
