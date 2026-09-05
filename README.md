@@ -2,9 +2,9 @@
 
 ## Features
 - Topic-driven research, script, thumbnail, and metadata (previously hardcoded to one demo topic no matter what you sent)
-- Dynamic 4-10 sec fast cuts
+- Dynamic 4-10 sec fast cuts, rescaled to match real narration length exactly
 - Hard Policy Gate (No Profanity / No Financial Guarantees) + AI-disclosure auto-add
-- Local TTS (Kokoro) + Captions (Whisper)
+- Local TTS (Kokoro, full script — was silently truncated to ~22%) + Captions (Whisper)
 - Real human-review gate before delivery (approve/reject)
 - Google Drive Auto-Upload
 
@@ -71,6 +71,64 @@ the `CLIPTextEncode` node and injects each scene's prompt into it (or set
 `comfyui.positive_prompt_node_id` in config.yaml if you have more than one and
 need to pin the right one). No workflow file present = placeholder frames,
 same as before, so nothing breaks if you skip this.
+
+## Deploying on a rented GPU (RunPod or similar)
+Simplest setup: run the **whole pipeline** (this app + Kokoro + Whisper + ComfyUI)
+together on one GPU pod, rather than splitting it across your local machine and
+a remote GPU — avoids exposing ComfyUI over the network and keeps everything
+in one place. Steps (RunPod as the concrete example; Vast.ai/Lambda etc. are
+the same idea, different UI):
+
+1. **Rent a pod.** Pick a template with CUDA/PyTorch preinstalled (e.g.
+   RunPod's official "PyTorch" template) — saves you from installing NVIDIA
+   drivers by hand. GPU: 24GB VRAM (RTX 4090 / A5000) is enough for
+   FLUX.1-schnell; reuse the L40S 48GB tier if that's what you've already got
+   running for your other channel. **Set the disk large** — 60GB+ container/volume,
+   since FLUX weights alone are 10-25GB, plus Kokoro/Whisper models and job files.
+   Use a **Network Volume** if the provider offers one, so the FLUX weights
+   persist across pod restarts — otherwise you're re-downloading 10-25GB every
+   time you spin a fresh pod up.
+
+2. **Open the pod's terminal** (web terminal or SSH) and clone your repo:
+   ```bash
+   git clone https://github.com/<you>/<repo>.git
+   cd <repo>
+   ```
+
+3. **Run both setup scripts** — same ones from earlier, nothing rented-GPU-specific
+   about them:
+   ```bash
+   bash setup.sh
+   bash setup_comfyui.sh
+   ```
+
+4. **Copy your secrets onto the pod** — these are gitignored on purpose, so
+   `git clone` won't bring them. Use `scp`, RunPod's file upload, or paste
+   contents via the web terminal:
+   - `.env` (with your real `ANTHROPIC_API_KEY`)
+   - `secrets/credentials.json` + `secrets/token.pickle` (do the one-time
+     Google OAuth browser step on your own machine first — see the Google
+     Drive section above — then copy `token.pickle` over)
+
+5. **Download the FLUX weights** on the pod itself (not locally) using the
+   `hf download` commands `setup_comfyui.sh` printed.
+
+6. **Expose the ports.** On RunPod: pod settings → expose HTTP ports **8000**
+   (this app) and **8188** (ComfyUI). You'll get public URLs for each.
+
+7. **Start both, in a `tmux` session** so they survive you disconnecting:
+   ```bash
+   tmux new -s pipeline
+   cd ComfyUI && ./venv/bin/python main.py --listen 0.0.0.0 --port 8188 &
+   cd .. && source venv/bin/activate && python run.py
+   # detach: Ctrl+B then D — reattach later with: tmux attach -t pipeline
+   ```
+
+8. Trigger jobs by POSTing to the pod's exposed port-8000 URL instead of
+   `localhost`, same as everything documented above.
+
+**Cost note:** rented GPUs bill per hour of pod uptime, running or not. Stop
+or terminate the pod when you're not actively generating videos.
 
 ## Still placeholder / needs your input
 - **QC** (`app/tools.py: run_qc`) checks that the rendered file has audio and roughly matches the planned duration — it is not a real quality/content model.
