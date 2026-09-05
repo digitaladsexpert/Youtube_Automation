@@ -19,3 +19,9 @@ youtube_hard_rules:
 models:
   tts: "kokoro"
   image: "flux"
+
+comfyui:
+  url: "http://127.0.0.1:8188"          # point this at your own ComfyUI (local or RunPod URL)
+  workflow_path: "config/comfyui_workflow.json"   # export from ComfyUI's UI, see README
+  positive_prompt_node_id: null          # leave null to auto-detect the first CLIPTextEncode node
+  timeout_seconds: 120

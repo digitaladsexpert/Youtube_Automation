@@ -3,6 +3,7 @@
 import os
 import json
 import asyncio
+import copy
 import subprocess
 import urllib.parse
 from datetime import datetime
@@ -257,19 +258,37 @@ async def mix_audio(job_id: str):
     return {"audio": final_path}
 
 
-# ---------- 7. ASSETS (ComfyUI / FLUX placeholder) ----------
+# ---------- 7. ASSETS (real ComfyUI client + safe placeholder fallback) ----------
 async def generate_assets(job_id: str):
     """
-    NOTE: real image generation is NOT wired up yet — plugging in your ComfyUI/FLUX
-    workflow call below is still on you (the payload shape depends on your workflow
-    JSON). Until you do, every scene gets a clearly-labeled placeholder frame.
+    Calls a real ComfyUI server if it's configured and reachable, using a
+    workflow JSON YOU export from ComfyUI's own UI (Workflow menu -> Export
+    (API)) — that's the only reliable way to get a correct node graph for
+    whatever checkpoint/nodes you actually have installed; hand-writing one
+    is too easy to get subtly wrong. Falls back to a clearly-labeled
+    placeholder frame if ComfyUI isn't set up yet, unreachable, or a specific
+    scene's generation fails, so a missing/broken ComfyUI setup never
+    silently blocks the rest of the pipeline.
 
-    FIXED: the original try/except here had the real call commented out and only
-    `pass` in the try body, so the except branch (which drew a placeholder) could
-    NEVER run — no image, not even a placeholder, was ever produced by this
-    function. edit_video()'s own separate fallback silently painted plain black
-    frames instead. This version actually produces a visible placeholder.
+    See config.yaml's `comfyui:` section and the README for setup steps.
     """
+    comfy_cfg = CONFIG.get("comfyui", {}) or {}
+    comfy_url = comfy_cfg.get("url", "http://127.0.0.1:8188")
+    workflow_path = comfy_cfg.get("workflow_path", "config/comfyui_workflow.json")
+    prompt_node_id = comfy_cfg.get("positive_prompt_node_id")
+    timeout_s = comfy_cfg.get("timeout_seconds", 120)
+
+    workflow_template = None
+    if os.path.exists(workflow_path):
+        with open(workflow_path, 'r') as f:
+            workflow_template = json.load(f)
+        if not prompt_node_id:
+            # Auto-detect the first CLIPTextEncode node if you didn't pin one in config.
+            for node_id, node in workflow_template.items():
+                if node.get("class_type") == "CLIPTextEncode":
+                    prompt_node_id = node_id
+                    break
+
     async with aiofiles.open(f"jobs/{job_id}/scene_plan.json", 'r') as f:
         plan = json.loads(await f.read())
     scenes = plan["scenes"]
@@ -279,28 +298,77 @@ async def generate_assets(job_id: str):
         img_path = f"jobs/{job_id}/assets/images/{scene['scene_id']}.png"
         prompt = scene.get("generation_prompt", "Abstract documentary visual")
         generated = False
-        try:
-            # TODO: wire this up to your real ComfyUI/FLUX workflow, e.g.:
-            # resp = requests.post("http://127.0.0.1:8188/prompt", json={...}, timeout=60)
-            # generated = resp.ok and <you saved the returned image to img_path>
-            pass
-        except Exception as e:
-            print(f"⚠️ Image generation call failed for {scene['scene_id']}: {e}")
+        failure_reason = "ComfyUI not configured (no config/comfyui_workflow.json)"
+
+        if workflow_template and prompt_node_id:
+            try:
+                generated = await _comfyui_generate(
+                    comfy_url, workflow_template, prompt_node_id, prompt, img_path, timeout_s
+                )
+                if not generated:
+                    failure_reason = "ComfyUI ran but returned no image"
+            except Exception as e:
+                failure_reason = f"ComfyUI call failed: {e}"
+                print(f"⚠️ {failure_reason} (scene {scene['scene_id']})")
 
         if not generated:
             img = Image.new('RGB', (1920, 1080), color=(20, 20, 40))
             d = ImageDraw.Draw(img)
             try:
-                font = ImageFont.truetype("arial.ttf", 36)
+                font = ImageFont.truetype("arial.ttf", 34)
             except Exception:
                 font = ImageFont.load_default()
-            d.text((80, 480), prompt[:60], fill='white', font=font)
+            d.text((80, 440), prompt[:60], fill='white', font=font)
+            d.text((80, 500), f"[placeholder — {failure_reason[:70]}]", fill=(180, 180, 180), font=font)
             img.save(img_path)
 
     manifest = {"assets": [{"scene_id": s["scene_id"], "path": f"jobs/{job_id}/assets/images/{s['scene_id']}.png"} for s in scenes]}
     async with aiofiles.open(f"jobs/{job_id}/asset_manifest.json", 'w') as f:
         await f.write(json.dumps(manifest))
     return manifest
+
+
+async def _comfyui_generate(comfy_url: str, workflow_template: dict, prompt_node_id: str,
+                             prompt_text: str, out_path: str, timeout_s: int) -> bool:
+    """
+    Real ComfyUI API client: POST /prompt, poll /history/{id}, fetch the
+    resulting image via /view. This is ComfyUI's stable, documented API
+    contract — the part that's fabricated per-install is the workflow graph
+    itself (loader/sampler nodes), which is why that comes from your own
+    exported JSON rather than being hardcoded here.
+    """
+    workflow = copy.deepcopy(workflow_template)
+    workflow[prompt_node_id]["inputs"]["text"] = prompt_text
+
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        resp = await client.post(f"{comfy_url}/prompt", json={"prompt": workflow})
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+
+        elapsed = 0
+        poll_interval = 2
+        while elapsed < timeout_s:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            hist_resp = await client.get(f"{comfy_url}/history/{prompt_id}")
+            history = hist_resp.json()
+            if prompt_id in history:
+                outputs = history[prompt_id].get("outputs", {})
+                for node_output in outputs.values():
+                    for img_info in node_output.get("images", []):
+                        img_resp = await client.get(
+                            f"{comfy_url}/view",
+                            params={
+                                "filename": img_info["filename"],
+                                "subfolder": img_info.get("subfolder", ""),
+                                "type": img_info.get("type", "output"),
+                            },
+                        )
+                        with open(out_path, 'wb') as f:
+                            f.write(img_resp.content)
+                        return True
+                return False  # job completed but produced no image output
+        return False  # timed out waiting for /history
 
 
 # ---------- 8. REAL EDITING (MoviePy) ----------

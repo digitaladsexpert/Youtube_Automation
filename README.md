@@ -44,8 +44,35 @@ curl -X POST "http://localhost:8000/job/{job_id}/reject"
 - Whisper's `base` model (~150MB) pulls from OpenAI's servers the first time `add_captions` runs.
 - If your deployment box has restricted outbound access, allow: `en.wikipedia.org`, `api.anthropic.com`, `huggingface.co`, Whisper's model host, and `www.googleapis.com`/`oauth2.googleapis.com`.
 
+## Image generation (ComfyUI + FLUX)
+`generate_assets` now calls a real ComfyUI server — this used to be a stub that
+never ran at all. Two options:
+
+**A) You already run ComfyUI somewhere (e.g. a RunPod GPU box):**
+Just point `config.yaml`'s `comfyui.url` at it, then follow "Get your workflow JSON" below.
+
+**B) Fresh local install:**
+Run `bash setup_comfyui.sh` (Mac/Linux) or `setup_comfyui.bat` (Windows).
+This clones ComfyUI as a *sibling* folder (its own venv, won't conflict with
+this project's deps) — verified against ComfyUI's real `requirements.txt`.
+It does **not** download FLUX's model weights (10-25GB+, and I can't verify
+current exact filenames/links live from here) — the script prints what you
+need and where to put it; check the model's Hugging Face page for the current
+download link. FLUX.1-schnell (Apache-2.0) needs no HF login; FLUX.1-dev needs
+you to accept a license there first.
+
+**Get your workflow JSON (either option, do this once):**
+In ComfyUI's web UI, build a Text-to-Image FLUX workflow — the real node types
+from ComfyUI's own official Flux blueprint are `UNETLoader` → `DualCLIPLoader`
+→ `VAELoader` → `EmptySD3LatentImage` → `CLIPTextEncode` → `KSampler` →
+`VAEDecode` → `SaveImage`. Then **Workflow menu → Export (API)** and save the
+result as `config/comfyui_workflow.json` in this project. The code auto-finds
+the `CLIPTextEncode` node and injects each scene's prompt into it (or set
+`comfyui.positive_prompt_node_id` in config.yaml if you have more than one and
+need to pin the right one). No workflow file present = placeholder frames,
+same as before, so nothing breaks if you skip this.
+
 ## Still placeholder / needs your input
-- **Image generation** (`app/tools.py: generate_assets`) — the ComfyUI/FLUX call is a stub with a `TODO`. Wire in your real workflow endpoint; until then every scene gets a labeled placeholder frame instead of a silent black one.
 - **QC** (`app/tools.py: run_qc`) checks that the rendered file has audio and roughly matches the planned duration — it is not a real quality/content model.
 - **Fact-checking** (`app/tools.py: fact_check_tool`) just confirms research produced non-empty facts — it doesn't independently verify anything.
 - Postgres/pgvector and n8n were removed from `docker-compose.yml` since the app runs on SQLite and doesn't use n8n. Re-add them if you actually wire those in.

@@ -2,6 +2,7 @@
 .env
 secrets/
 *.json
+!config/comfyui_workflow.json
 *.pickle
 
 # Python
@@ -19,6 +20,10 @@ jobs/
 assets/images/
 assets/audio/
 models/
+
+# ComfyUI (installed separately by setup_comfyui.sh into a sibling folder —
+# this entry is just a safety net in case it ever ends up nested here)
+ComfyUI/
 
 # IDE
 .vscode/
